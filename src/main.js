@@ -6,6 +6,8 @@ const state = {
   fontScale: 1,
   readerFont: loadPreference("readerFont", "roboto"),
   sidebarOpen: !window.matchMedia("(max-width: 1024px)").matches,
+  loadVersion: 0,
+  isLoading: false,
   syncFrame: 0,
 };
 
@@ -119,6 +121,7 @@ function initialize() {
   syncSidebarState();
   syncFontScale();
   syncReaderFont();
+  syncLoadingState();
 
   refs.fileInput.addEventListener("change", handleFileSelect);
   refs.emptyOpen.addEventListener("click", () => refs.fileInput.click());
@@ -199,22 +202,48 @@ function handleDragLeave(event) {
 }
 
 async function loadBook(file) {
+  const loadVersion = ++state.loadVersion;
   cleanupBook();
   setLoadingState(`Loading ${file.name}...`);
+  state.isLoading = true;
+  syncLoadingState();
 
   try {
     const arrayBuffer = await file.arrayBuffer();
-    const book = await parseEpub(arrayBuffer, file, setLoadingState);
+    if (loadVersion !== state.loadVersion) {
+      return;
+    }
+
+    const book = await parseEpub(arrayBuffer, file, (text) => {
+      if (loadVersion === state.loadVersion) {
+        setLoadingState(text);
+      }
+    });
+
+    if (loadVersion !== state.loadVersion) {
+      book.cleanup?.();
+      return;
+    }
+
+    setLoadingState(`Rendering ${book.chapters.length} chapters...`);
     state.book = book;
     const { renderFailures } = renderBook(book);
     if (!renderFailures) {
       clearMessage();
     }
   } catch (error) {
+    if (loadVersion !== state.loadVersion) {
+      return;
+    }
     console.error(error);
     refs.readerPanel.hidden = true;
     refs.dropzone.hidden = false;
     showMessage(error.message || "Failed to open this EPUB file.", "error");
+  } finally {
+    if (loadVersion === state.loadVersion) {
+      state.isLoading = false;
+      syncLoadingState();
+    }
   }
 }
 
@@ -479,6 +508,16 @@ function syncFontScale() {
 function syncReaderFont() {
   document.documentElement.dataset.readerFont = state.readerFont;
   refs.fontFamily.value = state.readerFont;
+}
+
+function syncLoadingState() {
+  refs.fileInput.disabled = state.isLoading;
+  refs.emptyOpen.disabled = state.isLoading;
+  refs.toggleSidebar.disabled = state.isLoading;
+  refs.fontDown.disabled = state.isLoading;
+  refs.fontUp.disabled = state.isLoading;
+  refs.fontFamily.disabled = state.isLoading;
+  refs.shell.classList.toggle("is-loading", state.isLoading);
 }
 
 function syncSidebarState() {

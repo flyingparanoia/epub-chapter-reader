@@ -204,6 +204,14 @@ button {
   transform: translateY(-1px);
 }
 
+.button:disabled,
+.icon-button:disabled,
+.select-control:disabled {
+  cursor: wait;
+  opacity: 0.65;
+  transform: none;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -351,6 +359,10 @@ button {
 .main-pane.is-dragging .reader-panel {
   outline: 2px dashed rgba(45, 125, 210, 0.45);
   outline-offset: -10px;
+}
+
+.app-shell.is-loading .empty-panel {
+  opacity: 0.94;
 }
 
 .empty-state,
