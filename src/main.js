@@ -206,8 +206,10 @@ async function loadBook(file) {
     const arrayBuffer = await file.arrayBuffer();
     const book = await parseEpub(arrayBuffer, file, setLoadingState);
     state.book = book;
-    renderBook(book);
-    clearMessage();
+    const { renderFailures } = renderBook(book);
+    if (!renderFailures) {
+      clearMessage();
+    }
   } catch (error) {
     console.error(error);
     refs.readerPanel.hidden = true;
@@ -251,19 +253,27 @@ function renderBook(book) {
     )
     .join("");
 
-  refs.chapterViewport.innerHTML = book.chapters
-    .map(
-      (chapter, index) => `
-        <article class="chapter-page" id="${chapter.id}" data-source-path="${chapter.path}">
-          <div class="chapter-banner">
-            <p class="chapter-kicker">Chapter ${index + 1}</p>
-            <h3 class="chapter-title">${escapeHtml(chapter.title)}</h3>
-          </div>
-          <div class="book-content">${chapter.html}</div>
-        </article>
-      `,
-    )
-    .join("");
+  const fragment = document.createDocumentFragment();
+  const renderFailures = [];
+
+  book.chapters.forEach((chapter, index) => {
+    try {
+      fragment.append(buildChapterElement(chapter, index));
+    } catch (error) {
+      console.error("Failed to render chapter", chapter.path, error);
+      renderFailures.push(chapter.title || `Chapter ${index + 1}`);
+      fragment.append(buildBrokenChapterElement(chapter, index, error));
+    }
+  });
+
+  refs.chapterViewport.replaceChildren(fragment);
+
+  if (renderFailures.length) {
+    showMessage(
+      `Rendered with ${renderFailures.length} chapter issue(s). Broken chapters show an inline warning instead of blanking the whole book.`,
+      "error",
+    );
+  }
 
   if (mobileQuery.matches) {
     state.sidebarOpen = false;
@@ -273,6 +283,69 @@ function renderBook(book) {
   requestAnimationFrame(() => {
     scheduleActiveChapterSync();
   });
+
+  return {
+    renderFailures: renderFailures.length,
+  };
+}
+
+function buildChapterElement(chapter, index) {
+  const article = document.createElement("article");
+  article.className = "chapter-page";
+  article.id = chapter.id;
+  article.dataset.sourcePath = chapter.path;
+
+  const banner = document.createElement("div");
+  banner.className = "chapter-banner";
+
+  const kicker = document.createElement("p");
+  kicker.className = "chapter-kicker";
+  kicker.textContent = `Chapter ${index + 1}`;
+
+  const title = document.createElement("h3");
+  title.className = "chapter-title";
+  title.textContent = chapter.title;
+
+  const content = document.createElement("div");
+  content.className = "book-content";
+
+  const template = document.createElement("template");
+  template.innerHTML = chapter.html;
+  content.append(template.content.cloneNode(true));
+
+  banner.append(kicker, title);
+  article.append(banner, content);
+  return article;
+}
+
+function buildBrokenChapterElement(chapter, index, error) {
+  const article = document.createElement("article");
+  article.className = "chapter-page";
+  article.id = chapter.id;
+  article.dataset.sourcePath = chapter.path;
+
+  const banner = document.createElement("div");
+  banner.className = "chapter-banner";
+
+  const kicker = document.createElement("p");
+  kicker.className = "chapter-kicker";
+  kicker.textContent = `Chapter ${index + 1}`;
+
+  const title = document.createElement("h3");
+  title.className = "chapter-title";
+  title.textContent = chapter.title;
+
+  const content = document.createElement("div");
+  content.className = "book-content chapter-error";
+  content.innerHTML = `
+    <p><strong>Chapter failed to render.</strong></p>
+    <p>${escapeHtml(error?.message || "Unknown rendering error.")}</p>
+    <p class="chapter-error-path">${escapeHtml(chapter.path)}</p>
+  `;
+
+  banner.append(kicker, title);
+  article.append(banner, content);
+  return article;
 }
 
 function handleTocClick(event) {
