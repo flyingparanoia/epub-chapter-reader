@@ -1,3 +1,15 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&family=Roboto:wght@400;500;700&display=swap");
+
+@font-face {
+  font-family: "Guardian Sans";
+  src:
+    local("Guardian Sans"),
+    local("Guardian Text Sans"),
+    local("GuardianSans"),
+    local("GuardianSansText");
+  font-display: swap;
+}
+
 :root {
   --bg-top: #f7f3eb;
   --bg-bottom: #eef3f7;
@@ -14,6 +26,19 @@
   --border: rgba(32, 48, 61, 0.11);
   --shadow: 0 24px 60px rgba(41, 59, 78, 0.12);
   --reader-font-scale: 1;
+  --font-ui: "Noto Sans", "Roboto", "Helvetica Neue", "Segoe UI", sans-serif;
+  --font-roboto: "Roboto", "Noto Sans", "Helvetica Neue", "Segoe UI", sans-serif;
+  --font-guardian: "Guardian Sans", "Noto Sans", "Roboto", "Helvetica Neue", "Segoe UI", sans-serif;
+  --font-noto: "Noto Sans", "Roboto", "Helvetica Neue", "Segoe UI", sans-serif;
+  --font-reader: var(--font-roboto);
+}
+
+:root[data-reader-font="guardian"] {
+  --font-reader: var(--font-guardian);
+}
+
+:root[data-reader-font="noto"] {
+  --font-reader: var(--font-noto);
 }
 
 * {
@@ -28,7 +53,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--text);
-  font-family: "Avenir Next", "Helvetica Neue", "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
   background:
     radial-gradient(circle at top left, rgba(45, 125, 210, 0.14), transparent 30%),
     radial-gradient(circle at bottom right, rgba(230, 195, 122, 0.18), transparent 35%),
@@ -94,8 +119,9 @@ button {
 .empty-panel h2,
 .chapter-title {
   margin: 0;
-  font-family: "Baskerville", "Iowan Old Style", "Palatino Linotype", serif;
-  letter-spacing: -0.02em;
+  font-family: var(--font-ui);
+  letter-spacing: -0.03em;
+  font-weight: 700;
 }
 
 .brand h1 {
@@ -132,6 +158,32 @@ button {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.font-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.control-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.select-control {
+  min-width: 150px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  font-weight: 600;
 }
 
 .button,
@@ -210,7 +262,10 @@ button {
 }
 
 .sidebar {
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   padding: 24px 20px;
   border-right: 1px solid var(--border);
   background:
@@ -237,6 +292,10 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .toc-button {
@@ -362,6 +421,7 @@ button {
   flex-direction: column;
   gap: 28px;
   padding-right: 8px;
+  overscroll-behavior: contain;
 }
 
 .chapter-page {
@@ -401,9 +461,9 @@ button {
 
 .book-content {
   color: #32414d;
-  font-family: "Charter", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-family: var(--font-reader);
   font-size: calc(1.08rem * var(--reader-font-scale));
-  line-height: 1.92;
+  line-height: 1.86;
   word-break: break-word;
 }
 
@@ -423,8 +483,9 @@ button {
 .book-content h6 {
   margin: 1.5em 0 0.55em;
   color: #22303a;
-  font-family: "Baskerville", "Iowan Old Style", "Palatino Linotype", serif;
-  line-height: 1.18;
+  font-family: var(--font-reader);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
 .book-content h1 {
@@ -531,18 +592,18 @@ button {
   background: rgba(255, 255, 255, 0.7);
 }
 
-.sidebar,
+.toc-list,
 .chapter-viewport {
   scrollbar-width: thin;
   scrollbar-color: rgba(45, 125, 210, 0.22) transparent;
 }
 
-.sidebar::-webkit-scrollbar,
+.toc-list::-webkit-scrollbar,
 .chapter-viewport::-webkit-scrollbar {
   width: 10px;
 }
 
-.sidebar::-webkit-scrollbar-thumb,
+.toc-list::-webkit-scrollbar-thumb,
 .chapter-viewport::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(45, 125, 210, 0.22);
@@ -616,6 +677,16 @@ button {
   .topbar-actions,
   .toolbar-controls {
     justify-content: space-between;
+  }
+
+  .font-picker {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .select-control {
+    min-width: 0;
+    flex: 1;
   }
 
   .brand {

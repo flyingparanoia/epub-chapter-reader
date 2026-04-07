@@ -4,6 +4,7 @@ import "./style.css";
 const state = {
   book: null,
   fontScale: 1,
+  readerFont: loadPreference("readerFont", "roboto"),
   sidebarOpen: !window.matchMedia("(max-width: 1024px)").matches,
   syncFrame: 0,
 };
@@ -34,6 +35,14 @@ app.innerHTML = `
         <span class="meta-chip">No book loaded</span>
       </div>
       <div class="toolbar-controls">
+        <label class="font-picker" for="font-family">
+          <span class="control-label">Body font</span>
+          <select id="font-family" class="select-control">
+            <option value="roboto">Roboto</option>
+            <option value="guardian">Guardian Sans</option>
+            <option value="noto">Noto Sans</option>
+          </select>
+        </label>
         <button id="font-down" class="icon-button" type="button" aria-label="Decrease font size">A-</button>
         <span id="font-indicator" class="font-indicator">100%</span>
         <button id="font-up" class="icon-button" type="button" aria-label="Increase font size">A+</button>
@@ -85,8 +94,10 @@ const refs = {
   shell: document.querySelector(".app-shell"),
   fileInput: document.querySelector("#file-input"),
   toggleSidebar: document.querySelector("#toggle-sidebar"),
+  sidebar: document.querySelector("#sidebar"),
   fontDown: document.querySelector("#font-down"),
   fontUp: document.querySelector("#font-up"),
+  fontFamily: document.querySelector("#font-family"),
   fontIndicator: document.querySelector("#font-indicator"),
   bookMeta: document.querySelector("#book-meta"),
   chapterCount: document.querySelector("#chapter-count"),
@@ -107,6 +118,7 @@ initialize();
 function initialize() {
   syncSidebarState();
   syncFontScale();
+  syncReaderFont();
 
   refs.fileInput.addEventListener("change", handleFileSelect);
   refs.emptyOpen.addEventListener("click", () => refs.fileInput.click());
@@ -117,6 +129,7 @@ function initialize() {
 
   refs.fontDown.addEventListener("click", () => updateFontScale(-0.1));
   refs.fontUp.addEventListener("click", () => updateFontScale(0.1));
+  refs.fontFamily.addEventListener("change", (event) => updateReaderFont(event.target.value));
   refs.chapterViewport.addEventListener("scroll", scheduleActiveChapterSync, { passive: true });
   refs.tocList.addEventListener("click", handleTocClick);
   refs.chapterViewport.addEventListener("click", handleChapterLinkClick);
@@ -268,6 +281,7 @@ function handleTocClick(event) {
     return;
   }
 
+  button.blur();
   const targetId = button.dataset.target;
   scrollToChapter(targetId);
 
@@ -320,7 +334,7 @@ function scrollToChapter(targetId, fragment = "") {
     return;
   }
 
-  chapter.scrollIntoView({ behavior: "smooth", block: "start" });
+  scrollReaderToTarget(chapter);
   updateActiveChapter(targetId);
 
   if (fragment) {
@@ -338,7 +352,9 @@ function scrollToFragment(chapterElement, fragment) {
     chapterElement.querySelector(`#${escaped}`) ??
     chapterElement.querySelector(`[name="${escaped}"]`);
 
-  target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (target) {
+    scrollReaderToTarget(target, 96);
+  }
 }
 
 function scheduleActiveChapterSync() {
@@ -376,9 +392,20 @@ function updateFontScale(delta) {
   syncFontScale();
 }
 
+function updateReaderFont(nextFont) {
+  state.readerFont = ["roboto", "guardian", "noto"].includes(nextFont) ? nextFont : "roboto";
+  syncReaderFont();
+  savePreference("readerFont", state.readerFont);
+}
+
 function syncFontScale() {
   document.documentElement.style.setProperty("--reader-font-scale", state.fontScale.toFixed(2));
   refs.fontIndicator.textContent = `${Math.round(state.fontScale * 100)}%`;
+}
+
+function syncReaderFont() {
+  document.documentElement.dataset.readerFont = state.readerFont;
+  refs.fontFamily.value = state.readerFont;
 }
 
 function syncSidebarState() {
@@ -396,6 +423,16 @@ function setLoadingState(text) {
   refs.readerPanel.hidden = true;
   refs.message.hidden = true;
   refs.dropzone.querySelector(".empty-copy").textContent = text;
+}
+
+function scrollReaderToTarget(target, offset = 20) {
+  const viewportRect = refs.chapterViewport.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const top = refs.chapterViewport.scrollTop + (targetRect.top - viewportRect.top) - offset;
+  refs.chapterViewport.scrollTo({
+    top: Math.max(0, top),
+    behavior: "smooth",
+  });
 }
 
 function showMessage(text, tone = "info") {
@@ -882,4 +919,20 @@ function escapeHtml(text) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function loadPreference(key, fallback) {
+  try {
+    return window.localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function savePreference(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures in private windows or restricted environments.
+  }
 }
