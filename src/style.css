@@ -467,6 +467,48 @@ button {
   word-break: break-word;
 }
 
+.book-content :where(
+  article,
+  section,
+  div,
+  p,
+  span,
+  a,
+  ul,
+  ol,
+  li,
+  dl,
+  dt,
+  dd,
+  blockquote,
+  table,
+  thead,
+  tbody,
+  tfoot,
+  tr,
+  td,
+  th,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  em,
+  strong,
+  b,
+  i,
+  u,
+  small,
+  sub,
+  sup,
+  font
+) {
+  color: inherit !important;
+  font-family: inherit !important;
+  background: transparent !important;
+}
+
 .book-content > :first-child {
   margin-top: 0;
 }
@@ -526,7 +568,7 @@ button {
 }
 
 .book-content a {
-  color: var(--accent-strong);
+  color: var(--accent-strong) !important;
 }
 
 .book-content img,
@@ -557,7 +599,7 @@ button {
 
 .book-content pre,
 .book-content code {
-  font-family: "SFMono-Regular", "Menlo", "Monaco", monospace;
+  font-family: "SFMono-Regular", "Menlo", "Monaco", monospace !important;
 }
 
 .book-content pre {
