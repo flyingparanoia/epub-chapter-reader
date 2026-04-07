@@ -436,6 +436,54 @@ button {
   overscroll-behavior: contain;
 }
 
+.chapter-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.chapter-position {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chapter-nav-button {
+  min-width: 112px;
+}
+
+.chapter-placeholder {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+}
+
+.chapter-placeholder-card {
+  max-width: 640px;
+  padding: 44px 40px;
+  border: 1px solid rgba(32, 48, 61, 0.08);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.78);
+  text-align: center;
+  box-shadow: 0 18px 38px rgba(41, 59, 78, 0.06);
+}
+
+.chapter-placeholder-card h3 {
+  margin: 0 0 10px;
+  font-family: var(--font-ui);
+  font-size: clamp(1.8rem, 2vw, 2.3rem);
+  letter-spacing: -0.03em;
+}
+
+.chapter-placeholder-card p:last-child {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .chapter-page {
   position: relative;
   padding: 46px 56px;
@@ -732,6 +780,14 @@ button {
 
   .chapter-page {
     padding: 34px 28px;
+  }
+
+  .chapter-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .chapter-nav-button {
+    width: 100%;
   }
 }
 

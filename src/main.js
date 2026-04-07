@@ -7,8 +7,10 @@ const state = {
   readerFont: loadPreference("readerFont", "roboto"),
   sidebarOpen: !window.matchMedia("(max-width: 1024px)").matches,
   loadVersion: 0,
-  isLoading: false,
-  syncFrame: 0,
+  chapterRequestVersion: 0,
+  activeChapterId: "",
+  isLoadingBook: false,
+  isLoadingChapter: false,
 };
 
 const app = document.querySelector("#app");
@@ -72,8 +74,8 @@ app.innerHTML = `
             <p class="eyebrow">Local File Reader</p>
             <h2>Open one EPUB, read it as a vertical chapter stack</h2>
             <p class="empty-copy">
-              Each spine chapter becomes an individual reading card. Use the left navigation
-              to jump between chapters and keep the flow in one continuous scroll.
+              The app reads the table of contents first, then renders chapters on demand.
+              Pick a chapter from the left and the reader will load just that section.
             </p>
             <div class="empty-actions">
               <button id="empty-open" class="button button-primary" type="button">Choose EPUB</button>
@@ -133,9 +135,8 @@ function initialize() {
   refs.fontDown.addEventListener("click", () => updateFontScale(-0.1));
   refs.fontUp.addEventListener("click", () => updateFontScale(0.1));
   refs.fontFamily.addEventListener("change", (event) => updateReaderFont(event.target.value));
-  refs.chapterViewport.addEventListener("scroll", scheduleActiveChapterSync, { passive: true });
   refs.tocList.addEventListener("click", handleTocClick);
-  refs.chapterViewport.addEventListener("click", handleChapterLinkClick);
+  refs.chapterViewport.addEventListener("click", handleReaderPaneClick);
 
   refs.mainPane.addEventListener("dragenter", handleDragState);
   refs.mainPane.addEventListener("dragover", handleDragState);
@@ -204,8 +205,8 @@ function handleDragLeave(event) {
 async function loadBook(file) {
   const loadVersion = ++state.loadVersion;
   cleanupBook();
-  setLoadingState(`Loading ${file.name}...`);
-  state.isLoading = true;
+  setLoadingState(`Opening ${file.name}...`);
+  state.isLoadingBook = true;
   syncLoadingState();
 
   try {
@@ -225,12 +226,10 @@ async function loadBook(file) {
       return;
     }
 
-    setLoadingState(`Rendering ${book.chapters.length} chapters...`);
     state.book = book;
-    const { renderFailures } = renderBook(book);
-    if (!renderFailures) {
-      clearMessage();
-    }
+    renderBookShell(book);
+    clearMessage();
+    await selectChapter(book.chapters[0]?.id, { reason: "Loading first chapter..." });
   } catch (error) {
     if (loadVersion !== state.loadVersion) {
       return;
@@ -241,7 +240,7 @@ async function loadBook(file) {
     showMessage(error.message || "Failed to open this EPUB file.", "error");
   } finally {
     if (loadVersion === state.loadVersion) {
-      state.isLoading = false;
+      state.isLoadingBook = false;
       syncLoadingState();
     }
   }
@@ -253,6 +252,9 @@ function cleanupBook() {
   }
 
   state.book = null;
+  state.activeChapterId = "";
+  state.chapterRequestVersion += 1;
+  state.isLoadingChapter = false;
   refs.chapterViewport.innerHTML = "";
   refs.tocList.innerHTML = `<div class="placeholder-note">Upload an EPUB to build the chapter list.</div>`;
   refs.chapterCount.textContent = "0";
@@ -260,7 +262,7 @@ function cleanupBook() {
   refs.dropzone.querySelector(".empty-copy").textContent = defaultEmptyCopy;
 }
 
-function renderBook(book) {
+function renderBookShell(book) {
   refs.dropzone.hidden = true;
   refs.readerPanel.hidden = false;
   refs.chapterCount.textContent = String(book.chapters.length);
@@ -281,44 +283,156 @@ function renderBook(book) {
       `,
     )
     .join("");
+  refs.chapterViewport.replaceChildren(
+    buildReaderToolbar(null),
+    buildReaderPlaceholder(
+      "Select a chapter",
+      "Pick a chapter from the table of contents. The reader now loads chapters on demand instead of rendering the whole book at once.",
+    ),
+  );
 
-  const fragment = document.createDocumentFragment();
-  const renderFailures = [];
+  if (mobileQuery.matches) {
+    state.sidebarOpen = false;
+    syncSidebarState();
+  }
+}
 
-  book.chapters.forEach((chapter, index) => {
-    try {
-      fragment.append(buildChapterElement(chapter, index));
-    } catch (error) {
-      console.error("Failed to render chapter", chapter.path, error);
-      renderFailures.push(chapter.title || `Chapter ${index + 1}`);
-      fragment.append(buildBrokenChapterElement(chapter, index, error));
+async function selectChapter(targetId, options = {}) {
+  if (!state.book || !targetId) {
+    return;
+  }
+
+  const chapter = state.book.chapterById.get(targetId);
+  if (!chapter) {
+    return;
+  }
+
+  const currentBook = state.book;
+  const loadVersion = state.loadVersion;
+  const requestVersion = ++state.chapterRequestVersion;
+  state.activeChapterId = targetId;
+  updateActiveChapter(targetId);
+  scrollTocButtonIntoView(targetId);
+
+  if (chapter.loadState === "ready" && chapter.html) {
+    renderChapter(chapter);
+    if (options.fragment) {
+      requestAnimationFrame(() => scrollToFragment(options.fragment));
+    } else {
+      refs.chapterViewport.scrollTop = 0;
     }
-  });
+    clearMessage();
+    prefetchNeighborChapters(chapter.index);
+    if (mobileQuery.matches) {
+      state.sidebarOpen = false;
+      syncSidebarState();
+    }
+    return;
+  }
 
-  refs.chapterViewport.replaceChildren(fragment);
+  state.isLoadingChapter = true;
+  renderChapterLoading(chapter, options.reason || "Loading chapter...");
 
-  if (renderFailures.length) {
-    showMessage(
-      `Rendered with ${renderFailures.length} chapter issue(s). Broken chapters show an inline warning instead of blanking the whole book.`,
-      "error",
+  try {
+    const loadedChapter = await loadChapterContent(currentBook, chapter);
+    if (
+      currentBook !== state.book ||
+      loadVersion !== state.loadVersion ||
+      requestVersion !== state.chapterRequestVersion ||
+      state.activeChapterId !== targetId
+    ) {
+      return;
+    }
+
+    renderChapter(loadedChapter);
+    clearMessage();
+    if (options.fragment) {
+      requestAnimationFrame(() => scrollToFragment(options.fragment));
+    } else {
+      refs.chapterViewport.scrollTop = 0;
+    }
+    prefetchNeighborChapters(loadedChapter.index);
+  } catch (error) {
+    if (
+      currentBook !== state.book ||
+      loadVersion !== state.loadVersion ||
+      requestVersion !== state.chapterRequestVersion
+    ) {
+      return;
+    }
+
+    console.error("Failed to load chapter", chapter.path, error);
+    refs.chapterViewport.replaceChildren(
+      buildReaderToolbar(chapter),
+      buildBrokenChapterElement(chapter, chapter.index, error),
     );
+    showMessage(error?.message || "Failed to render this chapter.", "error");
+  } finally {
+    if (
+      currentBook === state.book &&
+      loadVersion === state.loadVersion &&
+      requestVersion === state.chapterRequestVersion
+    ) {
+      state.isLoadingChapter = false;
+      renderToolbarState();
+    }
   }
 
   if (mobileQuery.matches) {
     state.sidebarOpen = false;
     syncSidebarState();
   }
-
-  requestAnimationFrame(() => {
-    scheduleActiveChapterSync();
-  });
-
-  return {
-    renderFailures: renderFailures.length,
-  };
 }
 
-function buildChapterElement(chapter, index) {
+function renderChapterLoading(chapter, text) {
+  refs.dropzone.hidden = true;
+  refs.readerPanel.hidden = false;
+  refs.chapterViewport.replaceChildren(
+    buildReaderToolbar(chapter),
+    buildReaderPlaceholder(chapter.title, text),
+  );
+}
+
+function renderChapter(chapter) {
+  refs.dropzone.hidden = true;
+  refs.readerPanel.hidden = false;
+  refs.chapterViewport.replaceChildren(buildReaderToolbar(chapter), buildChapterElement(chapter));
+}
+
+function renderToolbarState() {
+  const toolbar = refs.chapterViewport.querySelector(".chapter-toolbar");
+  if (!toolbar || !state.book) {
+    return;
+  }
+
+  const chapter = state.book.chapterById.get(state.activeChapterId) || null;
+  const nextToolbar = buildReaderToolbar(chapter);
+  toolbar.replaceWith(nextToolbar);
+}
+
+function prefetchNeighborChapters(index) {
+  if (!state.book) {
+    return;
+  }
+
+  [index - 1, index + 1].forEach((candidateIndex) => {
+    const chapter = state.book.chapters[candidateIndex];
+    if (!chapter || chapter.loadState === "ready" || chapter.loadState === "loading") {
+      return;
+    }
+
+    loadChapterContent(state.book, chapter).catch((error) => {
+      console.debug("Neighbor prefetch skipped", chapter.path, error);
+    });
+  });
+}
+
+function scrollTocButtonIntoView(targetId) {
+  const button = refs.tocList.querySelector(`[data-target="${targetId}"]`);
+  button?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function buildChapterElement(chapter) {
   const article = document.createElement("article");
   article.className = "chapter-page";
   article.id = chapter.id;
@@ -329,7 +443,7 @@ function buildChapterElement(chapter, index) {
 
   const kicker = document.createElement("p");
   kicker.className = "chapter-kicker";
-  kicker.textContent = `Chapter ${index + 1}`;
+  kicker.textContent = `Chapter ${chapter.index + 1}`;
 
   const title = document.createElement("h3");
   title.className = "chapter-title";
@@ -377,6 +491,65 @@ function buildBrokenChapterElement(chapter, index, error) {
   return article;
 }
 
+function buildReaderToolbar(chapter) {
+  const toolbar = document.createElement("div");
+  toolbar.className = "chapter-toolbar";
+
+  const previousChapter = chapter ? state.book?.chapters?.[chapter.index - 1] : null;
+  const nextChapter = chapter ? state.book?.chapters?.[chapter.index + 1] : null;
+
+  const previousButton = document.createElement("button");
+  previousButton.className = "button button-ghost chapter-nav-button";
+  previousButton.type = "button";
+  previousButton.textContent = "Previous";
+  previousButton.disabled = !previousChapter || state.isLoadingChapter;
+  if (previousChapter) {
+    previousButton.dataset.navTarget = previousChapter.id;
+  }
+
+  const position = document.createElement("div");
+  position.className = "chapter-position";
+  position.innerHTML = chapter
+    ? `<span class="meta-chip">Chapter ${chapter.index + 1}</span><span class="meta-chip">${escapeHtml(chapter.title)}</span>`
+    : `<span class="meta-chip">No chapter selected</span>`;
+
+  const nextButton = document.createElement("button");
+  nextButton.className = "button button-ghost chapter-nav-button";
+  nextButton.type = "button";
+  nextButton.textContent = "Next";
+  nextButton.disabled = !nextChapter || state.isLoadingChapter;
+  if (nextChapter) {
+    nextButton.dataset.navTarget = nextChapter.id;
+  }
+
+  toolbar.append(previousButton, position, nextButton);
+  return toolbar;
+}
+
+function buildReaderPlaceholder(title, copy) {
+  const panel = document.createElement("div");
+  panel.className = "chapter-placeholder";
+  panel.innerHTML = `
+    <div class="chapter-placeholder-card">
+      <p class="eyebrow">On-demand Chapter Render</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(copy)}</p>
+    </div>
+  `;
+  return panel;
+}
+
+function handleReaderPaneClick(event) {
+  const navButton = event.target.closest("[data-nav-target]");
+  if (navButton) {
+    event.preventDefault();
+    void selectChapter(navButton.dataset.navTarget);
+    return;
+  }
+
+  handleChapterLinkClick(event);
+}
+
 function handleTocClick(event) {
   const button = event.target.closest("[data-target]");
   if (!button) {
@@ -384,13 +557,7 @@ function handleTocClick(event) {
   }
 
   button.blur();
-  const targetId = button.dataset.target;
-  scrollToChapter(targetId);
-
-  if (mobileQuery.matches) {
-    state.sidebarOpen = false;
-    syncSidebarState();
-  }
+  void selectChapter(button.dataset.target);
 }
 
 function handleChapterLinkClick(event) {
@@ -427,66 +594,39 @@ function handleChapterLinkClick(event) {
     return;
   }
 
-  scrollToChapter(targetChapter.id, fragment);
+  void selectChapter(targetChapter.id, { fragment });
 }
 
 function scrollToChapter(targetId, fragment = "") {
-  const chapter = document.getElementById(targetId);
-  if (!chapter) {
-    return;
-  }
-
-  scrollReaderToTarget(chapter);
-  updateActiveChapter(targetId);
-
-  if (fragment) {
-    window.setTimeout(() => scrollToFragment(chapter, fragment), 250);
-  }
+  void selectChapter(targetId, { fragment });
 }
 
-function scrollToFragment(chapterElement, fragment) {
+function scrollToFragment(fragment) {
   if (!fragment) {
     return;
   }
 
   const escaped = CSS.escape(fragment);
   const target =
-    chapterElement.querySelector(`#${escaped}`) ??
-    chapterElement.querySelector(`[name="${escaped}"]`);
+    refs.chapterViewport.querySelector(`#${escaped}`) ??
+    refs.chapterViewport.querySelector(`[name="${escaped}"]`);
 
   if (target) {
     scrollReaderToTarget(target, 96);
   }
 }
 
-function scheduleActiveChapterSync() {
-  if (state.syncFrame) {
-    return;
-  }
-
-  state.syncFrame = requestAnimationFrame(() => {
-    state.syncFrame = 0;
-    syncActiveChapterFromScroll();
-  });
-}
-
-function syncActiveChapterFromScroll() {
-  const chapters = Array.from(refs.chapterViewport.querySelectorAll(".chapter-page"));
-  if (!chapters.length) {
-    return;
-  }
-
-  const viewportTop = refs.chapterViewport.getBoundingClientRect().top + 160;
-  const visible = chapters.filter((chapter) => chapter.getBoundingClientRect().top <= viewportTop);
-  const active = visible.at(-1) ?? chapters[0];
-
-  updateActiveChapter(active.id);
-}
-
 function updateActiveChapter(targetId) {
   refs.tocList.querySelectorAll(".toc-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.target === targetId);
   });
+}
+
+function syncRenderedTocTitle(chapter) {
+  const titleNode = refs.tocList.querySelector(`[data-target="${chapter.id}"] .toc-title`);
+  if (titleNode) {
+    titleNode.textContent = chapter.title;
+  }
 }
 
 function updateFontScale(delta) {
@@ -511,13 +651,10 @@ function syncReaderFont() {
 }
 
 function syncLoadingState() {
-  refs.fileInput.disabled = state.isLoading;
-  refs.emptyOpen.disabled = state.isLoading;
-  refs.toggleSidebar.disabled = state.isLoading;
-  refs.fontDown.disabled = state.isLoading;
-  refs.fontUp.disabled = state.isLoading;
-  refs.fontFamily.disabled = state.isLoading;
-  refs.shell.classList.toggle("is-loading", state.isLoading);
+  refs.fileInput.disabled = state.isLoadingBook;
+  refs.emptyOpen.disabled = state.isLoadingBook;
+  refs.toggleSidebar.disabled = state.isLoadingBook;
+  refs.shell.classList.toggle("is-loading", state.isLoadingBook);
 }
 
 function syncSidebarState() {
@@ -560,6 +697,7 @@ function clearMessage() {
 }
 
 async function parseEpub(arrayBuffer, file, reportProgress) {
+  reportProgress("Reading EPUB package...");
   const zip = await JSZip.loadAsync(arrayBuffer);
   const objectUrlCache = new Map();
   const containerText = await readZipText(zip, "META-INF/container.xml");
@@ -571,6 +709,7 @@ async function parseEpub(arrayBuffer, file, reportProgress) {
     throw new Error("The EPUB package document was not found.");
   }
 
+  reportProgress("Building table of contents...");
   const packageText = await readZipText(zip, packagePath);
   const packageDoc = parseXml(packageText, packagePath);
   const manifest = extractManifest(packageDoc, packagePath);
@@ -590,23 +729,23 @@ async function parseEpub(arrayBuffer, file, reportProgress) {
     throw new Error("This EPUB has no readable spine chapters.");
   }
 
-  const chapters = [];
+  reportProgress(`Indexed ${spine.length} chapters. Preparing reader...`);
 
-  for (let index = 0; index < spine.length; index += 1) {
-    const item = spine[index];
-    reportProgress(`Parsing chapter ${index + 1} / ${spine.length}...`);
-    chapters.push(await buildChapter(zip, item, index, tocLookup, objectUrlCache));
-  }
+  const chapters = spine.map((item, index) => buildChapterDescriptor(item, index, tocLookup));
 
   const title = metadata.title || file.name.replace(/\.epub$/i, "");
   const creator = metadata.creator || metadata.publisher || "";
   const chapterByPath = new Map(chapters.map((chapter) => [chapter.path, chapter]));
+  const chapterById = new Map(chapters.map((chapter) => [chapter.id, chapter]));
 
   return {
+    zip,
+    objectUrlCache,
     title,
     creator,
     chapters,
     chapterByPath,
+    chapterById,
     fileSize: formatBytes(file.size),
     cleanup() {
       objectUrlCache.forEach((url) => URL.revokeObjectURL(url));
@@ -615,30 +754,68 @@ async function parseEpub(arrayBuffer, file, reportProgress) {
   };
 }
 
-async function buildChapter(zip, item, index, tocLookup, objectUrlCache) {
-  const rawMarkup = await readZipText(zip, item.path);
-  const documentNode = new DOMParser().parseFromString(rawMarkup, "text/html");
-  sanitizeChapterDocument(documentNode);
-  await rewriteAssetUrls(documentNode, zip, objectUrlCache, item.path);
-  await rewriteInlineStyles(documentNode, zip, objectUrlCache, item.path);
-
-  const body = documentNode.body;
-  if (!body) {
-    throw new Error(`Could not parse chapter markup: ${item.path}`);
-  }
-
-  const title =
-    tocLookup.get(normalizeHrefPath(item.path)) ||
-    pickHeading(body) ||
-    documentNode.title?.trim() ||
-    `Chapter ${index + 1}`;
+function buildChapterDescriptor(item, index, tocLookup) {
+  const path = normalizeHrefPath(item.path);
+  const tocTitle = tocLookup.get(path);
 
   return {
     id: `chapter-${index + 1}`,
-    path: normalizeHrefPath(item.path),
-    title: compactWhitespace(title),
-    html: body.innerHTML,
+    index,
+    path,
+    title: compactWhitespace(tocTitle || `Chapter ${index + 1}`),
+    html: "",
+    loadState: "idle",
+    loadPromise: null,
   };
+}
+
+async function loadChapterContent(book, chapter) {
+  if (!book || !chapter) {
+    throw new Error("Missing chapter data.");
+  }
+
+  if (chapter.loadState === "ready" && chapter.html) {
+    return chapter;
+  }
+
+  if (chapter.loadPromise) {
+    return chapter.loadPromise;
+  }
+
+  chapter.loadState = "loading";
+  chapter.loadPromise = (async () => {
+    const rawMarkup = await readZipText(book.zip, chapter.path);
+  const documentNode = new DOMParser().parseFromString(rawMarkup, "text/html");
+  sanitizeChapterDocument(documentNode);
+    await rewriteAssetUrls(documentNode, book.zip, book.objectUrlCache, chapter.path);
+    await rewriteInlineStyles(documentNode, book.zip, book.objectUrlCache, chapter.path);
+
+  const body = documentNode.body;
+  if (!body) {
+      throw new Error(`Could not parse chapter markup: ${chapter.path}`);
+  }
+
+    const discoveredTitle =
+      pickHeading(body) ||
+      documentNode.title?.trim() ||
+      chapter.title ||
+      `Chapter ${chapter.index + 1}`;
+
+    if (isPlaceholderChapterTitle(chapter.title, chapter.index) || !chapter.title) {
+      chapter.title = compactWhitespace(discoveredTitle);
+    }
+    chapter.html = body.innerHTML;
+    chapter.loadState = "ready";
+    chapter.loadPromise = null;
+    syncRenderedTocTitle(chapter);
+    return chapter;
+  })().catch((error) => {
+    chapter.loadState = "error";
+    chapter.loadPromise = null;
+    throw error;
+  });
+
+  return chapter.loadPromise;
 }
 
 function sanitizeChapterDocument(documentNode) {
@@ -1031,6 +1208,10 @@ function escapeHtml(text) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function isPlaceholderChapterTitle(title, index) {
+  return compactWhitespace(title || "") === `Chapter ${index + 1}`;
 }
 
 function loadPreference(key, fallback) {
