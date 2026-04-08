@@ -185,6 +185,7 @@ function initialize() {
   });
 
   document.addEventListener("fullscreenchange", syncFullscreenState);
+  document.addEventListener("keydown", handleKeyboardShortcuts);
 
   document.addEventListener("click", (event) => {
     if (!mobileQuery.matches || !state.sidebarOpen) {
@@ -783,6 +784,49 @@ function updateFontScale(delta) {
   syncFontScale();
 }
 
+function handleKeyboardShortcuts(event) {
+  if (shouldIgnoreShortcutTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+    return;
+  }
+
+  if (event.key === "+" || event.key === "=") {
+    event.preventDefault();
+    updateFontScale(0.1);
+    announceFontScaleShortcut();
+    return;
+  }
+
+  if (event.key === "-" || event.key === "_") {
+    event.preventDefault();
+    updateFontScale(-0.1);
+    announceFontScaleShortcut();
+    return;
+  }
+
+  if (event.key === "0") {
+    event.preventDefault();
+    state.fontScale = 1;
+    syncFontScale();
+    announceFontScaleShortcut();
+  }
+}
+
+function shouldIgnoreShortcutTarget(target) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='']"),
+  );
+}
+
+function announceFontScaleShortcut() {
+  if (state.isFullscreen) {
+    refs.fullscreenExit.title = buildFullscreenExitLabel();
+  }
+}
+
 function updateReaderFont(nextFont) {
   state.readerFont = ["roboto", "guardian", "noto"].includes(nextFont) ? nextFont : "roboto";
   syncReaderFont();
@@ -895,6 +939,7 @@ function syncFullscreenState() {
   refs.shell.classList.toggle("is-reader-fullscreen", state.isFullscreen);
   refs.fullscreenExit.hidden = !state.isFullscreen;
   refs.topFullscreen.textContent = state.isFullscreen ? "Exit fullscreen" : "Fullscreen";
+  refs.fullscreenExit.title = buildFullscreenExitLabel();
   syncFullscreenButtons();
 }
 
@@ -902,6 +947,10 @@ function syncFullscreenButtons() {
   const canEnterFullscreen = Boolean(state.book && state.activeChapterId && !state.isLoadingBook);
   refs.topFullscreen.disabled = !canEnterFullscreen && !state.isFullscreen;
   refs.fullscreenExit.disabled = !state.isFullscreen;
+}
+
+function buildFullscreenExitLabel() {
+  return `Exit fullscreen. Font ${Math.round(state.fontScale * 100)}%. Use + / - / 0 to resize.`;
 }
 
 async function parseEpub(arrayBuffer, file, reportProgress) {
