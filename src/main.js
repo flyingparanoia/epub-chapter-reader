@@ -17,6 +17,7 @@ const state = {
   activeChapterId: "",
   isLoadingBook: false,
   isLoadingChapter: false,
+  isFullscreen: false,
   progressSaveTimer: 0,
   recentBooks: loadJsonPreference(RECENT_BOOKS_KEY, []),
 };
@@ -36,6 +37,7 @@ app.innerHTML = `
       <div class="topbar-actions">
         <button id="top-open" class="button button-primary" type="button">Open EPUB</button>
         <input id="file-input" type="file" accept=".epub,application/epub+zip" hidden />
+        <button id="top-fullscreen" class="button button-ghost" type="button">Fullscreen</button>
         <button id="toggle-sidebar" class="button button-ghost" type="button">Contents</button>
       </div>
     </header>
@@ -104,6 +106,9 @@ app.innerHTML = `
         <div id="message" class="message" hidden></div>
 
         <section id="reader-panel" class="reader-panel" hidden>
+          <button id="fullscreen-exit" class="button button-ghost fullscreen-exit" type="button" hidden>
+            Exit fullscreen
+          </button>
           <div id="chapter-viewport" class="chapter-viewport"></div>
         </section>
       </main>
@@ -115,6 +120,7 @@ const refs = {
   shell: document.querySelector(".app-shell"),
   fileInput: document.querySelector("#file-input"),
   topOpen: document.querySelector("#top-open"),
+  topFullscreen: document.querySelector("#top-fullscreen"),
   toggleSidebar: document.querySelector("#toggle-sidebar"),
   sidebar: document.querySelector("#sidebar"),
   fontDown: document.querySelector("#font-down"),
@@ -132,6 +138,7 @@ const refs = {
   recentNote: document.querySelector("#recent-note"),
   message: document.querySelector("#message"),
   readerPanel: document.querySelector("#reader-panel"),
+  fullscreenExit: document.querySelector("#fullscreen-exit"),
   chapterViewport: document.querySelector("#chapter-viewport"),
   mainPane: document.querySelector("#main-pane"),
 };
@@ -146,10 +153,13 @@ function initialize() {
   syncFontScale();
   syncReaderFont();
   syncLoadingState();
+  syncFullscreenState();
   renderRecentBooks();
 
   refs.fileInput.addEventListener("change", handleFileSelect);
   refs.topOpen.addEventListener("click", () => void openBookPicker());
+  refs.topFullscreen.addEventListener("click", () => void toggleReaderFullscreen());
+  refs.fullscreenExit.addEventListener("click", () => void exitReaderFullscreen());
   refs.emptyOpen.addEventListener("click", () => void openBookPicker());
   refs.toggleSidebar.addEventListener("click", () => {
     state.sidebarOpen = !state.sidebarOpen;
@@ -173,6 +183,8 @@ function initialize() {
     state.sidebarOpen = !mobileQuery.matches;
     syncSidebarState();
   });
+
+  document.addEventListener("fullscreenchange", syncFullscreenState);
 
   document.addEventListener("click", (event) => {
     if (!mobileQuery.matches || !state.sidebarOpen) {
@@ -382,6 +394,7 @@ function cleanupBook() {
   refs.chapterCount.textContent = "0";
   refs.bookMeta.innerHTML = chip("No book loaded");
   refs.dropzone.querySelector(".empty-copy").textContent = defaultEmptyCopy;
+  syncFullscreenButtons();
 }
 
 function renderBookShell(book) {
@@ -435,6 +448,7 @@ async function selectChapter(targetId, options = {}) {
   state.activeChapterId = targetId;
   updateActiveChapter(targetId);
   scrollTocButtonIntoView(targetId);
+  syncFullscreenButtons();
 
   if (chapter.loadState === "ready" && chapter.html) {
     renderChapter(chapter);
@@ -788,9 +802,11 @@ function syncReaderFont() {
 function syncLoadingState() {
   refs.fileInput.disabled = state.isLoadingBook;
   refs.topOpen.disabled = state.isLoadingBook;
+  refs.topFullscreen.disabled = (!state.book || !state.activeChapterId) && !state.isFullscreen;
   refs.emptyOpen.disabled = state.isLoadingBook;
   refs.toggleSidebar.disabled = state.isLoadingBook;
   refs.shell.classList.toggle("is-loading", state.isLoadingBook);
+  syncFullscreenButtons();
 }
 
 function syncSidebarState() {
@@ -835,6 +851,57 @@ function clearMessage() {
   refs.message.hidden = true;
   refs.message.textContent = "";
   delete refs.message.dataset.tone;
+}
+
+async function toggleReaderFullscreen() {
+  if (state.isFullscreen) {
+    await exitReaderFullscreen();
+    return;
+  }
+
+  if (!state.book || !state.activeChapterId) {
+    showMessage("Open a chapter first, then enter fullscreen.", "info");
+    return;
+  }
+
+  if (typeof refs.shell.requestFullscreen !== "function") {
+    showMessage("Fullscreen is not supported in this browser.", "error");
+    return;
+  }
+
+  try {
+    await refs.shell.requestFullscreen();
+  } catch (error) {
+    console.error("Failed to enter fullscreen.", error);
+    showMessage("Could not enter fullscreen.", "error");
+  }
+}
+
+async function exitReaderFullscreen() {
+  if (!document.fullscreenElement) {
+    return;
+  }
+
+  try {
+    await document.exitFullscreen();
+  } catch (error) {
+    console.error("Failed to exit fullscreen.", error);
+    showMessage("Could not exit fullscreen.", "error");
+  }
+}
+
+function syncFullscreenState() {
+  state.isFullscreen = document.fullscreenElement === refs.shell;
+  refs.shell.classList.toggle("is-reader-fullscreen", state.isFullscreen);
+  refs.fullscreenExit.hidden = !state.isFullscreen;
+  refs.topFullscreen.textContent = state.isFullscreen ? "Exit fullscreen" : "Fullscreen";
+  syncFullscreenButtons();
+}
+
+function syncFullscreenButtons() {
+  const canEnterFullscreen = Boolean(state.book && state.activeChapterId && !state.isLoadingBook);
+  refs.topFullscreen.disabled = !canEnterFullscreen && !state.isFullscreen;
+  refs.fullscreenExit.disabled = !state.isFullscreen;
 }
 
 async function parseEpub(arrayBuffer, file, reportProgress) {

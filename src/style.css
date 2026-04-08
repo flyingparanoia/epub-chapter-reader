@@ -520,7 +520,15 @@ button {
 }
 
 .reader-panel {
+  position: relative;
   padding: 22px;
+}
+
+.fullscreen-exit {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 20;
 }
 
 .chapter-viewport {
@@ -833,6 +841,65 @@ button {
   overflow: hidden;
 }
 
+.app-shell.is-reader-fullscreen {
+  max-width: none;
+  min-height: 100vh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  background:
+    radial-gradient(circle at top, rgba(230, 195, 122, 0.14), transparent 38%),
+    linear-gradient(180deg, #f8f4ec, #eef2f6);
+}
+
+.app-shell.is-reader-fullscreen .topbar,
+.app-shell.is-reader-fullscreen .statusbar,
+.app-shell.is-reader-fullscreen .sidebar,
+.app-shell.is-reader-fullscreen .message,
+.app-shell.is-reader-fullscreen .chapter-toolbar {
+  display: none !important;
+}
+
+.app-shell.is-reader-fullscreen .workspace {
+  display: block;
+}
+
+.app-shell.is-reader-fullscreen .main-pane {
+  padding: 0;
+}
+
+.app-shell.is-reader-fullscreen .reader-panel {
+  min-height: 100vh;
+  height: 100vh;
+  padding: 76px 28px 28px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell.is-reader-fullscreen .chapter-viewport {
+  height: calc(100vh - 104px);
+  padding-right: 0;
+  scrollbar-width: none;
+}
+
+.app-shell.is-reader-fullscreen .chapter-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.app-shell.is-reader-fullscreen .chapter-page {
+  max-width: min(980px, 100%);
+  margin: 0 auto;
+  padding: 64px 72px;
+  border: 0;
+  box-shadow: 0 22px 52px rgba(41, 59, 78, 0.08);
+}
+
+.app-shell.is-reader-fullscreen .chapter-placeholder {
+  min-height: calc(100vh - 160px);
+}
+
 @media (max-width: 1024px) {
   #app {
     padding: 14px;
@@ -885,6 +952,18 @@ button {
 
   .chapter-nav-button {
     width: 100%;
+  }
+
+  .app-shell.is-reader-fullscreen .reader-panel {
+    padding: 72px 18px 18px;
+  }
+
+  .app-shell.is-reader-fullscreen .chapter-viewport {
+    height: calc(100vh - 96px);
+  }
+
+  .app-shell.is-reader-fullscreen .chapter-page {
+    padding: 40px 28px;
   }
 }
 
