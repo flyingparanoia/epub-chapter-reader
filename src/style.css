@@ -192,7 +192,8 @@ button {
 
 .button,
 .icon-button,
-.toc-button {
+.toc-button,
+.recent-item {
   border: 1px solid transparent;
   transition:
     transform 180ms ease,
@@ -204,7 +205,8 @@ button {
 
 .button:hover,
 .icon-button:hover,
-.toc-button:hover {
+.toc-button:hover,
+.recent-item:hover {
   transform: translateY(-1px);
 }
 
@@ -424,6 +426,97 @@ button {
 
 .drop-hint {
   font-size: 0.92rem;
+}
+
+.recent-panel {
+  margin-top: 28px;
+  padding: 22px;
+  border: 1px solid rgba(32, 48, 61, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.72);
+  text-align: left;
+}
+
+.recent-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.recent-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
+}
+
+.recent-capability {
+  white-space: nowrap;
+}
+
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recent-item {
+  width: 100%;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border-color: rgba(32, 48, 61, 0.08);
+  background: rgba(248, 250, 252, 0.94);
+  text-align: left;
+}
+
+.recent-item-main,
+.recent-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recent-item-main {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.recent-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.recent-action-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(45, 125, 210, 0.1);
+  color: var(--accent-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.recent-meta,
+.recent-note {
+  color: var(--muted);
+}
+
+.recent-meta {
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.recent-note {
+  margin: 14px 0 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
 }
 
 .reader-panel {
@@ -823,6 +916,12 @@ button {
 
   .empty-panel h2 {
     font-size: 2.2rem;
+  }
+
+  .recent-header,
+  .recent-title-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .chapter-title {

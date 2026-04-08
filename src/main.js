@@ -1,6 +1,12 @@
 import JSZip from "jszip";
 import "./style.css";
 
+const RECENT_BOOKS_KEY = "epub-chapter-reader.recent-books.v1";
+const PROGRESS_PREFIX = "epub-chapter-reader.progress.";
+const MAX_RECENT_BOOKS = 8;
+const HANDLE_DB_NAME = "epub-chapter-reader";
+const HANDLE_STORE_NAME = "file-handles";
+
 const state = {
   book: null,
   fontScale: 1,
@@ -11,6 +17,8 @@ const state = {
   activeChapterId: "",
   isLoadingBook: false,
   isLoadingChapter: false,
+  progressSaveTimer: 0,
+  recentBooks: loadJsonPreference(RECENT_BOOKS_KEY, []),
 };
 
 const app = document.querySelector("#app");
@@ -26,10 +34,8 @@ app.innerHTML = `
         </div>
       </div>
       <div class="topbar-actions">
-        <label class="button button-primary file-picker">
-          <input id="file-input" type="file" accept=".epub,application/epub+zip" hidden />
-          <span>Open EPUB</span>
-        </label>
+        <button id="top-open" class="button button-primary" type="button">Open EPUB</button>
+        <input id="file-input" type="file" accept=".epub,application/epub+zip" hidden />
         <button id="toggle-sidebar" class="button button-ghost" type="button">Contents</button>
       </div>
     </header>
@@ -81,6 +87,17 @@ app.innerHTML = `
               <button id="empty-open" class="button button-primary" type="button">Choose EPUB</button>
               <span class="drop-hint">or drag a file into this window</span>
             </div>
+            <section id="recent-panel" class="recent-panel" hidden>
+              <div class="recent-header">
+                <div>
+                  <p class="eyebrow">Local History</p>
+                  <h3>Recent EPUBs</h3>
+                </div>
+                <span id="recent-capability" class="meta-chip recent-capability"></span>
+              </div>
+              <div id="recent-list" class="recent-list"></div>
+              <p id="recent-note" class="recent-note"></p>
+            </section>
           </div>
         </section>
 
@@ -97,6 +114,7 @@ app.innerHTML = `
 const refs = {
   shell: document.querySelector(".app-shell"),
   fileInput: document.querySelector("#file-input"),
+  topOpen: document.querySelector("#top-open"),
   toggleSidebar: document.querySelector("#toggle-sidebar"),
   sidebar: document.querySelector("#sidebar"),
   fontDown: document.querySelector("#font-down"),
@@ -108,6 +126,10 @@ const refs = {
   tocList: document.querySelector("#toc-list"),
   dropzone: document.querySelector("#dropzone"),
   emptyOpen: document.querySelector("#empty-open"),
+  recentPanel: document.querySelector("#recent-panel"),
+  recentList: document.querySelector("#recent-list"),
+  recentCapability: document.querySelector("#recent-capability"),
+  recentNote: document.querySelector("#recent-note"),
   message: document.querySelector("#message"),
   readerPanel: document.querySelector("#reader-panel"),
   chapterViewport: document.querySelector("#chapter-viewport"),
@@ -124,9 +146,11 @@ function initialize() {
   syncFontScale();
   syncReaderFont();
   syncLoadingState();
+  renderRecentBooks();
 
   refs.fileInput.addEventListener("change", handleFileSelect);
-  refs.emptyOpen.addEventListener("click", () => refs.fileInput.click());
+  refs.topOpen.addEventListener("click", () => void openBookPicker());
+  refs.emptyOpen.addEventListener("click", () => void openBookPicker());
   refs.toggleSidebar.addEventListener("click", () => {
     state.sidebarOpen = !state.sidebarOpen;
     syncSidebarState();
@@ -136,7 +160,9 @@ function initialize() {
   refs.fontUp.addEventListener("click", () => updateFontScale(0.1));
   refs.fontFamily.addEventListener("change", (event) => updateReaderFont(event.target.value));
   refs.tocList.addEventListener("click", handleTocClick);
+  refs.recentList.addEventListener("click", handleRecentBookClick);
   refs.chapterViewport.addEventListener("click", handleReaderPaneClick);
+  refs.chapterViewport.addEventListener("scroll", handleReaderScroll, { passive: true });
 
   refs.mainPane.addEventListener("dragenter", handleDragState);
   refs.mainPane.addEventListener("dragover", handleDragState);
@@ -173,6 +199,45 @@ async function handleFileSelect(event) {
   refs.fileInput.value = "";
 }
 
+async function openBookPicker() {
+  if (state.isLoadingBook) {
+    return;
+  }
+
+  if (supportsPersistentFileHandles()) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        multiple: false,
+        excludeAcceptAllOption: true,
+        types: [
+          {
+            description: "EPUB books",
+            accept: {
+              "application/epub+zip": [".epub"],
+            },
+          },
+        ],
+      });
+
+      if (!handle) {
+        return;
+      }
+
+      const file = await handle.getFile();
+      await loadBook(file, { fileHandle: handle });
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        return;
+      }
+
+      console.warn("Native file picker failed, falling back to input.", error);
+    }
+  }
+
+  refs.fileInput.click();
+}
+
 async function handleDrop(event) {
   event.preventDefault();
   refs.mainPane.classList.remove("is-dragging");
@@ -189,6 +254,31 @@ async function handleDrop(event) {
   await loadBook(file);
 }
 
+async function handleRecentBookClick(event) {
+  const button = event.target.closest("[data-recent-key]");
+  if (!button) {
+    return;
+  }
+
+  const item = state.recentBooks.find((candidate) => candidate.key === button.dataset.recentKey);
+  if (!item) {
+    return;
+  }
+
+  if (item.hasFileHandle && supportsPersistentFileHandles()) {
+    const reopened = await reopenRecentBook(item);
+    if (reopened) {
+      return;
+    }
+  }
+
+  showMessage(
+    `Choose "${item.title}" again and the reader will resume from ${item.chapterLabel || "your last saved point"}.`,
+    "info",
+  );
+  await openBookPicker();
+}
+
 function handleDragState(event) {
   event.preventDefault();
   refs.mainPane.classList.add("is-dragging");
@@ -202,7 +292,18 @@ function handleDragLeave(event) {
   refs.mainPane.classList.remove("is-dragging");
 }
 
-async function loadBook(file) {
+function handleReaderScroll() {
+  if (!state.book || !state.activeChapterId || state.isLoadingChapter) {
+    return;
+  }
+
+  window.clearTimeout(state.progressSaveTimer);
+  state.progressSaveTimer = window.setTimeout(() => {
+    persistReadingProgress();
+  }, 160);
+}
+
+async function loadBook(file, options = {}) {
   const loadVersion = ++state.loadVersion;
   cleanupBook();
   setLoadingState(`Opening ${file.name}...`);
@@ -227,9 +328,28 @@ async function loadBook(file) {
     }
 
     state.book = book;
+    if (options.fileHandle) {
+      await saveStoredFileHandle(book.storageKey, options.fileHandle);
+    }
+
+    upsertRecentBook(book, null, { hasFileHandle: Boolean(options.fileHandle) });
     renderBookShell(book);
     clearMessage();
-    await selectChapter(book.chapters[0]?.id, { reason: "Loading first chapter..." });
+
+    const savedProgress = loadReadingProgress(book.storageKey);
+    const initialChapterId =
+      savedProgress?.chapterId && book.chapterById.has(savedProgress.chapterId)
+        ? savedProgress.chapterId
+        : book.chapters[0]?.id;
+
+    await selectChapter(initialChapterId, {
+      reason: savedProgress ? "Restoring your last reading point..." : "Loading first chapter...",
+      scrollRatio: savedProgress?.chapterId === initialChapterId ? savedProgress.scrollRatio : null,
+    });
+
+    if (savedProgress?.chapterId === initialChapterId) {
+      showMessage(`Resumed ${savedProgress.chapterLabel || "your last reading point"}.`, "info");
+    }
   } catch (error) {
     if (loadVersion !== state.loadVersion) {
       return;
@@ -251,6 +371,8 @@ function cleanupBook() {
     state.book.cleanup();
   }
 
+  window.clearTimeout(state.progressSaveTimer);
+  state.progressSaveTimer = 0;
   state.book = null;
   state.activeChapterId = "";
   state.chapterRequestVersion += 1;
@@ -316,11 +438,7 @@ async function selectChapter(targetId, options = {}) {
 
   if (chapter.loadState === "ready" && chapter.html) {
     renderChapter(chapter);
-    if (options.fragment) {
-      requestAnimationFrame(() => scrollToFragment(options.fragment));
-    } else {
-      refs.chapterViewport.scrollTop = 0;
-    }
+    applyChapterLocation(options);
     clearMessage();
     prefetchNeighborChapters(chapter.index);
     if (mobileQuery.matches) {
@@ -346,11 +464,7 @@ async function selectChapter(targetId, options = {}) {
 
     renderChapter(loadedChapter);
     clearMessage();
-    if (options.fragment) {
-      requestAnimationFrame(() => scrollToFragment(options.fragment));
-    } else {
-      refs.chapterViewport.scrollTop = 0;
-    }
+    applyChapterLocation(options);
     prefetchNeighborChapters(loadedChapter.index);
   } catch (error) {
     if (
@@ -597,6 +711,27 @@ function handleChapterLinkClick(event) {
   void selectChapter(targetChapter.id, { fragment });
 }
 
+function applyChapterLocation(options = {}) {
+  const scrollRatio =
+    typeof options.scrollRatio === "number" && Number.isFinite(options.scrollRatio)
+      ? clamp(options.scrollRatio, 0, 1)
+      : null;
+
+  requestAnimationFrame(() => {
+    if (options.fragment) {
+      scrollToFragment(options.fragment);
+    } else if (scrollRatio !== null) {
+      scrollReaderToRatio(scrollRatio);
+    } else {
+      refs.chapterViewport.scrollTop = 0;
+    }
+
+    requestAnimationFrame(() => {
+      persistReadingProgress();
+    });
+  });
+}
+
 function scrollToChapter(targetId, fragment = "") {
   void selectChapter(targetId, { fragment });
 }
@@ -652,6 +787,7 @@ function syncReaderFont() {
 
 function syncLoadingState() {
   refs.fileInput.disabled = state.isLoadingBook;
+  refs.topOpen.disabled = state.isLoadingBook;
   refs.emptyOpen.disabled = state.isLoadingBook;
   refs.toggleSidebar.disabled = state.isLoadingBook;
   refs.shell.classList.toggle("is-loading", state.isLoadingBook);
@@ -682,6 +818,11 @@ function scrollReaderToTarget(target, offset = 20) {
     top: Math.max(0, top),
     behavior: "smooth",
   });
+}
+
+function scrollReaderToRatio(ratio) {
+  const maxScroll = refs.chapterViewport.scrollHeight - refs.chapterViewport.clientHeight;
+  refs.chapterViewport.scrollTop = maxScroll > 0 ? maxScroll * ratio : 0;
 }
 
 function showMessage(text, tone = "info") {
@@ -735,12 +876,15 @@ async function parseEpub(arrayBuffer, file, reportProgress) {
 
   const title = metadata.title || file.name.replace(/\.epub$/i, "");
   const creator = metadata.creator || metadata.publisher || "";
+  const storageKey = buildBookStorageKey(metadata, file);
   const chapterByPath = new Map(chapters.map((chapter) => [chapter.path, chapter]));
   const chapterById = new Map(chapters.map((chapter) => [chapter.id, chapter]));
 
   return {
     zip,
     objectUrlCache,
+    storageKey,
+    fileName: file.name,
     title,
     creator,
     chapters,
@@ -1007,6 +1151,7 @@ function extractMetadata(packageDoc) {
     title: textFromLocalName(metadataNode, "title"),
     creator: textFromLocalName(metadataNode, "creator"),
     publisher: textFromLocalName(metadataNode, "publisher"),
+    identifier: textFromLocalName(metadataNode, "identifier"),
   };
 }
 
@@ -1227,5 +1372,295 @@ function savePreference(key, value) {
     window.localStorage.setItem(key, value);
   } catch {
     // Ignore storage failures in private windows or restricted environments.
+  }
+}
+
+function loadJsonPreference(key, fallback) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJsonPreference(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage failures in private windows or restricted environments.
+  }
+}
+
+function loadReadingProgress(storageKey) {
+  if (!storageKey) {
+    return null;
+  }
+
+  return loadJsonPreference(`${PROGRESS_PREFIX}${storageKey}`, null);
+}
+
+function persistReadingProgress() {
+  if (!state.book || !state.activeChapterId) {
+    return;
+  }
+
+  const chapter = state.book.chapterById.get(state.activeChapterId);
+  if (!chapter) {
+    return;
+  }
+
+  const progress = {
+    chapterId: chapter.id,
+    chapterIndex: chapter.index,
+    chapterTitle: chapter.title,
+    chapterLabel: buildChapterLabel(chapter.index, chapter.title),
+    scrollRatio: getViewportScrollRatio(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveJsonPreference(`${PROGRESS_PREFIX}${state.book.storageKey}`, progress);
+  upsertRecentBook(state.book, progress);
+}
+
+function upsertRecentBook(book, progress = null, options = {}) {
+  if (!book?.storageKey) {
+    return;
+  }
+
+  const existing = state.recentBooks.find((item) => item.key === book.storageKey) || null;
+  const chapterIndex = progress?.chapterIndex ?? existing?.chapterIndex ?? 0;
+  const chapterTitle = progress?.chapterTitle || existing?.chapterTitle || book.chapters[0]?.title || "";
+  const chapterId = progress?.chapterId || existing?.chapterId || book.chapters[0]?.id || "";
+  const entry = {
+    key: book.storageKey,
+    title: book.title,
+    creator: book.creator,
+    fileName: book.fileName,
+    fileSize: book.fileSize,
+    chapterCount: book.chapters.length,
+    chapterId,
+    chapterIndex,
+    chapterTitle,
+    chapterLabel:
+      progress?.chapterLabel || existing?.chapterLabel || buildChapterLabel(chapterIndex, chapterTitle),
+    scrollRatio: progress?.scrollRatio ?? existing?.scrollRatio ?? 0,
+    lastReadAt: progress?.updatedAt || existing?.lastReadAt || new Date().toISOString(),
+    hasFileHandle: options.hasFileHandle ?? existing?.hasFileHandle ?? false,
+  };
+
+  state.recentBooks = [entry, ...state.recentBooks.filter((item) => item.key !== entry.key)].slice(
+    0,
+    MAX_RECENT_BOOKS,
+  );
+  saveJsonPreference(RECENT_BOOKS_KEY, state.recentBooks);
+  renderRecentBooks();
+}
+
+function renderRecentBooks() {
+  const hasRecentBooks = state.recentBooks.length > 0;
+  refs.recentPanel.hidden = !hasRecentBooks;
+
+  if (!hasRecentBooks) {
+    refs.recentList.innerHTML = "";
+    refs.recentCapability.textContent = "";
+    refs.recentNote.textContent = "";
+    return;
+  }
+
+  const canOneClickReopen = supportsPersistentFileHandles();
+  refs.recentCapability.textContent = canOneClickReopen ? "One-click reopen ready" : "Progress only";
+  refs.recentNote.textContent = canOneClickReopen
+    ? "Books opened in this browser can be reopened from this list with one click."
+    : "This browser remembers your reading point locally. You will choose the EPUB file again before resuming.";
+
+  refs.recentList.innerHTML = state.recentBooks
+    .map((item) => {
+      const actionLabel = item.hasFileHandle && canOneClickReopen ? "Open again" : "Choose file";
+      return `
+        <button class="recent-item" type="button" data-recent-key="${item.key}">
+          <span class="recent-item-main">
+            <span class="recent-title-row">
+              <span class="recent-title">${escapeHtml(item.title)}</span>
+              <span class="recent-action-chip">${escapeHtml(actionLabel)}</span>
+            </span>
+            <span class="recent-meta">${escapeHtml(formatRecentMeta(item))}</span>
+          </span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function formatRecentMeta(item) {
+  const parts = [
+    item.creator || "",
+    item.chapterLabel || "Saved locally",
+    formatRelativeTime(item.lastReadAt),
+  ].filter(Boolean);
+  return parts.join(" • ");
+}
+
+function formatRelativeTime(value) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "Saved locally";
+  }
+
+  const delta = Date.now() - timestamp;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (delta < minute) {
+    return "Just now";
+  }
+
+  if (delta < hour) {
+    return `${Math.max(1, Math.round(delta / minute))} min ago`;
+  }
+
+  if (delta < day) {
+    return `${Math.max(1, Math.round(delta / hour))} h ago`;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
+function buildChapterLabel(index, title) {
+  const chapterNumber = Number.isFinite(index) ? `Chapter ${Number(index) + 1}` : "Saved point";
+  return title ? `${chapterNumber} · ${title}` : chapterNumber;
+}
+
+function getViewportScrollRatio() {
+  const maxScroll = refs.chapterViewport.scrollHeight - refs.chapterViewport.clientHeight;
+  if (maxScroll <= 0) {
+    return 0;
+  }
+
+  return clamp(refs.chapterViewport.scrollTop / maxScroll, 0, 1);
+}
+
+function buildBookStorageKey(metadata, file) {
+  const seed = [
+    metadata.identifier || "",
+    metadata.title || "",
+    metadata.creator || "",
+    file.name || "",
+    String(file.size || 0),
+  ].join("|");
+
+  return `book-${hashString(seed)}`;
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+
+  for (const char of value) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16);
+}
+
+function supportsPersistentFileHandles() {
+  return Boolean(window.isSecureContext && "showOpenFilePicker" in window && "indexedDB" in window);
+}
+
+let handleDatabasePromise;
+
+function openHandleDatabase() {
+  if (!supportsPersistentFileHandles()) {
+    return Promise.resolve(null);
+  }
+
+  if (!handleDatabasePromise) {
+    handleDatabasePromise = new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(HANDLE_DB_NAME, 1);
+
+      request.addEventListener("upgradeneeded", () => {
+        if (!request.result.objectStoreNames.contains(HANDLE_STORE_NAME)) {
+          request.result.createObjectStore(HANDLE_STORE_NAME);
+        }
+      });
+
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    }).catch((error) => {
+      console.warn("Unable to open file handle database.", error);
+      return null;
+    });
+  }
+
+  return handleDatabasePromise;
+}
+
+async function saveStoredFileHandle(key, handle) {
+  if (!key || !handle) {
+    return false;
+  }
+
+  const database = await openHandleDatabase();
+  if (!database) {
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    const transaction = database.transaction(HANDLE_STORE_NAME, "readwrite");
+    transaction.objectStore(HANDLE_STORE_NAME).put(handle, key);
+    transaction.addEventListener("complete", () => resolve(true));
+    transaction.addEventListener("abort", () => resolve(false));
+    transaction.addEventListener("error", () => resolve(false));
+  });
+}
+
+async function getStoredFileHandle(key) {
+  if (!key) {
+    return null;
+  }
+
+  const database = await openHandleDatabase();
+  if (!database) {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    const request = database.transaction(HANDLE_STORE_NAME, "readonly").objectStore(HANDLE_STORE_NAME).get(key);
+    request.addEventListener("success", () => resolve(request.result || null));
+    request.addEventListener("error", () => resolve(null));
+  });
+}
+
+async function reopenRecentBook(item) {
+  try {
+    const handle = await getStoredFileHandle(item.key);
+    if (!handle) {
+      return false;
+    }
+
+    if (typeof handle.queryPermission === "function") {
+      let permission = await handle.queryPermission({ mode: "read" });
+      if (permission !== "granted" && typeof handle.requestPermission === "function") {
+        permission = await handle.requestPermission({ mode: "read" });
+      }
+      if (permission !== "granted") {
+        showMessage("Browser access to that EPUB was denied. Choose the file again to resume.", "error");
+        return false;
+      }
+    }
+
+    const file = await handle.getFile();
+    await loadBook(file, { fileHandle: handle });
+    return true;
+  } catch (error) {
+    console.warn("Could not reopen saved EPUB handle.", error);
+    showMessage("Could not reopen this EPUB directly. Choose the file again to resume.", "error");
+    return false;
   }
 }
