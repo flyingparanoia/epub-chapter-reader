@@ -528,7 +528,10 @@ button {
 
 .reader-panel {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   padding: 22px;
 }
 
@@ -540,11 +543,12 @@ button {
 }
 
 .chapter-viewport {
-  height: calc(100vh - 242px);
-  overflow: auto;
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 28px;
+  min-height: 0;
+  overflow: auto;
   padding-right: 8px;
   overscroll-behavior: contain;
 }
@@ -889,7 +893,7 @@ button {
 }
 
 .app-shell.is-reader-fullscreen .chapter-viewport {
-  height: calc(100vh - 104px);
+  flex: 1 1 auto;
   padding-right: 0;
   scrollbar-width: none;
 }
@@ -951,7 +955,7 @@ button {
   }
 
   .chapter-viewport {
-    height: calc(100vh - 255px);
+    flex: 1 1 auto;
   }
 
   .chapter-page {
@@ -971,7 +975,7 @@ button {
   }
 
   .app-shell.is-reader-fullscreen .chapter-viewport {
-    height: calc(100vh - 96px);
+    flex: 1 1 auto;
   }
 
   .app-shell.is-reader-fullscreen .chapter-page {
