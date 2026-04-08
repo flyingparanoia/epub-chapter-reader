@@ -131,7 +131,7 @@ button {
 }
 
 .brand h1 {
-  font-size: clamp(1.4rem, 2vw, 2rem);
+  font-size: 1.125rem;
 }
 
 .brand-mark {
@@ -150,7 +150,7 @@ button {
 .eyebrow {
   margin: 0 0 4px;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -179,7 +179,7 @@ button {
 
 .control-label {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.84rem;
   font-weight: 600;
 }
 
@@ -189,6 +189,7 @@ button {
   background: transparent;
   color: var(--text);
   outline: none;
+  font-size: 0.96rem;
   font-weight: 600;
 }
 
@@ -227,6 +228,7 @@ button {
   min-height: 44px;
   padding: 0 18px;
   border-radius: 999px;
+  font-size: 0.96rem;
   font-weight: 600;
 }
 
@@ -262,6 +264,7 @@ button {
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.66);
   color: var(--muted);
+  font-size: 0.96rem;
 }
 
 .font-indicator {
@@ -353,7 +356,7 @@ button {
 }
 
 .toc-title {
-  font-size: 0.97rem;
+  font-size: 0.92rem;
   line-height: 1.35;
 }
 
